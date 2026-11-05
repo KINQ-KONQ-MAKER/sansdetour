@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Sans Détour – détourage d’images dans le navigateur</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>✂️</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,800&family=Atkinson+Hyperlegible:wght@400;700&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<style>
+:root{
+  --mat:#1f5e4a; --mat-line:#2f7a60; --mat-line-strong:#4c9a7d;
+  --paper:#f6f6f1; --surface:#ffffff; --ink:#18201c; --muted:#5d6b64;
+  --blade:#f2c230; --blade-ink:#2a2200; --danger:#b3261e; --border:#d9ddd6;
+  --check-a:#e9ece7; --check-b:#ffffff;
+  color-scheme: light;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px);
+  padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#121614; --surface:#1b211e; --ink:#e8ede9; --muted:#9aa8a1;
+    --border:#2c3531; --check-a:#2a312d; --check-b:#202622; --mat:#184b3b;
+    --danger:#ff8a80; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#121614; --surface:#1b211e; --ink:#e8ede9; --muted:#9aa8a1;
+  --border:#2c3531; --check-a:#2a312d; --check-b:#202622; --mat:#184b3b;
+  --danger:#ff8a80; color-scheme: dark;
+}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font:400 1rem/1.55 "Atkinson Hyperlegible", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.wrap{max-width:1080px; margin:0 auto; padding:2rem 1.25rem 4rem}
+header{display:flex; align-items:baseline; justify-content:space-between; gap:1rem; flex-wrap:wrap; margin-bottom:1.5rem}
+h1{
+  font-family:"Bricolage Grotesque", "Arial Narrow", system-ui, sans-serif;
+  font-weight:800; font-size:clamp(2.6rem, 7vw, 4.2rem); line-height:.95; margin:0; letter-spacing:-.02em;
+}
+h1 .cut{display:inline-block; border-bottom:4px dashed var(--blade); padding-bottom:.05em}
+.tagline{color:var(--muted); max-width:34ch; margin:0}
+
+/* Tapis de découpe */
+.mat{
+  position:relative; border-radius:18px; background-color:var(--mat); color:#eaf5ef;
+  background-image:
+    linear-gradient(var(--mat-line-strong) 1px, transparent 1px),
+    linear-gradient(90deg, var(--mat-line-strong) 1px, transparent 1px),
+    linear-gradient(var(--mat-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--mat-line) 1px, transparent 1px);
+  background-size:100px 100px,100px 100px,20px 20px,20px 20px;
+  background-position:-1px -1px;
+  padding:2.75rem 1.5rem; text-align:center; cursor:pointer;
+  outline:3px solid transparent; outline-offset:4px; transition:outline-color .15s, transform .15s;
+}
+.mat::before,.mat::after{ /* règles graduées */
+  content:""; position:absolute; left:14px; right:14px; height:10px;
+  background:repeating-linear-gradient(90deg, rgba(255,255,255,.55) 0 1px, transparent 1px 10px);
+  opacity:.6; pointer-events:none;
+}
+.mat::before{top:10px} .mat::after{bottom:10px}
+.mat:focus-visible{outline-color:var(--blade)}
+.mat.over{outline-color:var(--blade); transform:scale(1.005)}
+.mat h2{font-family:"Bricolage Grotesque", system-ui, sans-serif; font-weight:800; font-size:clamp(1.4rem,3.5vw,2rem); margin:.2rem 0 .4rem}
+.mat p{margin:0; opacity:.85}
+.mat .btn{margin-top:1.1rem}
+.status{margin-top:.9rem; min-height:1.4em; font-size:.92rem}
+.bar{height:6px; max-width:320px; margin:.5rem auto 0; background:rgba(255,255,255,.2); border-radius:3px; overflow:hidden; display:none}
+.bar > i{display:block; height:100%; width:0; background:var(--blade); transition:width .2s}
+
+.btn{
+  font:700 .95rem/1 "Atkinson Hyperlegible", system-ui, sans-serif; border:0; border-radius:10px;
+  padding:.75rem 1.1rem; cursor:pointer; background:var(--blade); color:var(--blade-ink);
+  display:inline-flex; align-items:center; gap:.45rem;
+}
+.btn:hover{filter:brightness(1.05)}
+.btn:focus-visible,.ghost:focus-visible,select:focus-visible,input:focus-visible{outline:3px solid var(--blade); outline-offset:2px}
+.btn:disabled{opacity:.5; cursor:not-allowed}
+.ghost{
+  font:700 .9rem/1 "Atkinson Hyperlegible", system-ui, sans-serif; background:transparent; color:var(--ink);
+  border:1.5px solid var(--border); border-radius:10px; padding:.6rem .9rem; cursor:pointer;
+}
+.ghost:hover{border-color:var(--ink)}
+
+/* Réglages */
+.tools{
+  display:flex; flex-wrap:wrap; gap:1.25rem 2rem; align-items:center; margin:1.75rem 0 1rem;
+  padding:1rem 0; border-top:1.5px solid var(--border); border-bottom:1.5px solid var(--border);
+}
+.tools label[hidden]{display:none}
+.tools select{font:inherit; color:var(--ink); background:var(--surface); border:1.5px solid var(--border); border-radius:8px; padding:.35rem .5rem}
+.tools label{display:flex; align-items:center; gap:.5rem; font-size:.95rem}
+.tools .spacer{flex:1}
+.swatches{display:flex; gap:.35rem; align-items:center}
+.sw{width:28px; height:28px; border-radius:50%; border:2px solid var(--border); cursor:pointer; padding:0}
+.sw[aria-pressed="true"]{border-color:var(--ink); box-shadow:0 0 0 2px var(--paper), 0 0 0 4px var(--ink)}
+.sw.transp{background:conic-gradient(var(--check-a) 25%, var(--check-b) 0 50%, var(--check-a) 0 75%, var(--check-b) 0) 0 0/12px 12px}
+input[type=color]{width:30px; height:30px; border:0; padding:0; background:none; cursor:pointer}
+input[type=range]{accent-color:var(--blade)}
+
+/* Résultats */
+.list{display:grid; gap:1.5rem}
+.empty{color:var(--muted); text-align:center; padding:1.5rem 0}
+.item{display:grid; grid-template-columns:minmax(0,1.4fr) minmax(0,1fr); gap:1.25rem; align-items:start}
+@media (max-width:720px){ .item{grid-template-columns:1fr} }
+.stage{
+  position:relative; border-radius:14px; overflow:hidden; border:1.5px solid var(--border);
+  background:conic-gradient(var(--check-a) 25%, var(--check-b) 0 50%, var(--check-a) 0 75%, var(--check-b) 0) 0 0/20px 20px;
+  aspect-ratio:var(--ar, 4/3); max-height:70vh; user-select:none;
+}
+.stage img{position:absolute; inset:0; width:100%; height:100%; object-fit:contain; pointer-events:none}
+.stage .before{clip-path:inset(0 calc(100% - var(--pos,50%)) 0 0)}
+.stage .handle{position:absolute; top:0; bottom:0; left:var(--pos,50%); width:2px; background:var(--blade); transform:translateX(-1px); pointer-events:none}
+.stage .handle::after{
+  content:"⟷"; position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  width:34px; height:34px; border-radius:50%; background:var(--blade); color:var(--blade-ink);
+  display:grid; place-items:center; font-weight:700;
+}
+.stage input[type=range]{position:absolute; inset:0; width:100%; height:100%; opacity:0; cursor:ew-resize; margin:0}
+.stage .tag{position:absolute; bottom:.6rem; padding:.2rem .5rem; border-radius:6px; font-size:.78rem; background:rgba(0,0,0,.6); color:#fff; pointer-events:none}
+.stage .tag.l{left:.6rem} .stage .tag.r{right:.6rem}
+.stage .busy{
+  position:absolute; inset:0; display:grid; place-items:center; background:rgba(31,94,74,.55); color:#fff; font-weight:700;
+  background-image:repeating-linear-gradient(45deg, transparent 0 14px, rgba(255,255,255,.08) 14px 28px);
+  background-size:40px 40px; animation:slide 1s linear infinite;
+}
+@keyframes slide{to{background-position:40px 0}}
+@media (prefers-reduced-motion: reduce){ .stage .busy{animation:none} .mat{transition:none} }
+.meta h3{font-family:"Bricolage Grotesque", system-ui, sans-serif; font-weight:800; font-size:1.25rem; margin:.2rem 0 .3rem; overflow-wrap:anywhere}
+.meta p{margin:.15rem 0; color:var(--muted); font-size:.92rem}
+.meta .actions{display:flex; flex-wrap:wrap; gap:.5rem; margin-top:1rem}
+.meta .err{color:var(--danger)}
+footer{margin-top:3rem; color:var(--muted); font-size:.85rem; max-width:70ch}
+footer a{color:inherit}
+.sr{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1><span class="cut">Sans Détour</span></h1>
+    <p class="tagline">Glissez une image, récupérez un PNG au fond transparent. Tout se passe sur votre ordinateur&#8239;: rien n’est envoyé.</p>
+  </header>
+
+  <div class="mat" id="drop" tabindex="0" role="button" aria-describedby="status">
+    <h2>Déposez vos images ici</h2>
+    <p>JPG, PNG ou WebP · plusieurs à la fois · ou collez avec Ctrl+V</p>
+    <span class="btn" aria-hidden="true">Choisir des fichiers</span>
+    <div class="status" id="status" aria-live="polite"></div>
+    <div class="bar" id="bar"><i></i></div>
+    <input type="file" id="file" accept="image/*" multiple hidden>
+  </div>
+
+  <div class="tools" id="tools">
+    <div class="swatches" role="group" aria-label="Fond">
+      <span>Fond</span>
+      <button class="sw transp" data-bg="transparent" aria-pressed="true" title="Transparent"><span class="sr">Transparent</span></button>
+      <button class="sw" data-bg="#ffffff" style="background:#fff" aria-pressed="false" title="Blanc"><span class="sr">Blanc</span></button>
+      <button class="sw" data-bg="#000000" style="background:#000" aria-pressed="false" title="Noir"><span class="sr">Noir</span></button>
+      <input type="color" id="bgColor" value="#f2c230" title="Couleur personnalisée" aria-label="Couleur personnalisée">
+    </div>
+    <label>Bords <input type="range" id="edge" min="1" max="6" step="0.5" value="1" aria-label="Netteté des bords"> <span id="edgeVal">doux</span></label>
+    <label>Cadrage
+      <select id="frame">
+        <option value="full">Image d’origine</option>
+        <option value="tight">Ajusté au sujet</option>
+        <option value="center">Sujet centré</option>
+      </select>
+    </label>
+    <label class="centerOpt" hidden>Format
+      <select id="ratio">
+        <option value="orig">Comme l’original</option>
+        <option value="1">Carré 1:1</option>
+        <option value="0.8">Portrait 4:5</option>
+        <option value="0.75">Portrait 3:4</option>
+        <option value="1.7778">Paysage 16:9</option>
+      </select>
+    </label>
+    <label class="marginOpt" hidden>Marge <input type="range" id="margin" min="0" max="30" step="1" value="8" aria-label="Marge autour du sujet"> <span id="marginVal">8 %</span></label>
+    <span class="spacer"></span>
+    <button class="ghost" id="clear" disabled>Tout effacer</button>
+    <button class="btn" id="zip" disabled>Tout télécharger (.zip)</button>
+  </div>
+
+  <section class="list" id="list" aria-label="Images détourées">
+    <p class="empty" id="empty">Aucune image pour l’instant.</p>
+  </section>
+
+  <footer>
+    Détourage par le modèle RMBG-1.4 de BRIA AI, exécuté localement via Transformers.js. Le modèle (~45 Mo) est téléchargé au premier usage puis gardé en cache par le navigateur. Licence du modèle&#8239;: usage non commercial.
+  </footer>
+</div>
+
+<script type="module">
+import { AutoModel, AutoProcessor, RawImage, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.2";
+env.allowLocalModels = false;
+
+const MODEL_ID = "briaai/RMBG-1.4";
+const $ = s => document.querySelector(s);
+const drop = $("#drop"), fileInput = $("#file"), statusEl = $("#status"), bar = $("#bar"), barFill = bar.firstElementChild;
+const list = $("#list"), empty = $("#empty");
+
+const opts = { bg: "transparent", edge: 1, frame: "full", ratio: "orig", margin: 0.08 };
+const items = [];
+let model = null, processor = null, loading = null, device = "wasm";
+const queue = [];
+let running = false;
+
+/* ---------- Chargement du modèle ---------- */
+function setStatus(t){ statusEl.textContent = t; }
+function setProgress(p){ bar.style.display = p == null ? "none" : "block"; barFill.style.width = (p ?? 0) + "%"; }
+
+async function loadModel(dev){
+  const files = {};
+  const progress_callback = p => {
+    if (p.status === "progress" && p.total){
+      files[p.file] = [p.loaded, p.total];
+      const [l, t] = Object.values(files).reduce((a, [x, y]) => [a[0] + x, a[1] + y], [0, 0]);
+      setProgress(Math.round(l / t * 100));
+      setStatus(`Téléchargement du modèle… ${(l/1e6).toFixed(0)} / ${(t/1e6).toFixed(0)} Mo`);
+    }
+  };
+  const m = await AutoModel.from_pretrained(MODEL_ID, { config: { model_type: "custom" }, device: dev, progress_callback });
+  const pr = await AutoProcessor.from_pretrained(MODEL_ID, {
+    config: {
+      do_normalize: true, do_pad: false, do_rescale: true, do_resize: true,
+      image_mean: [0.5, 0.5, 0.5], image_std: [1, 1, 1], resample: 2,
+      rescale_factor: 0.00392156862745098, size: { width: 1024, height: 1024 },
+      feature_extractor_type: "ImageFeatureExtractor",
+    }
+  });
+  return [m, pr];
+}
+
+function ensureModel(){
+  if (loading) return loading;
+  loading = (async () => {
+    setStatus("Préparation du modèle…"); setProgress(0);
+    if ("gpu" in navigator){
+      try { [model, processor] = await loadModel("webgpu"); device = "webgpu"; }
+      catch { model = null; }
+    }
+    if (!model){ [model, processor] = await loadModel("wasm"); device = "wasm"; }
+    setProgress(null);
+    setStatus(`Modèle prêt (${device === "webgpu" ? "accélération GPU" : "processeur"}).`);
+  })().catch(e => { loading = null; setProgress(null); setStatus("Impossible de charger le modèle. Vérifiez la connexion et rechargez la page."); throw e; });
+  return loading;
+}
+
+async function computeMask(url){
+  const image = await RawImage.fromURL(url);
+  const { pixel_values } = await processor(image);
+  let out;
+  try { ({ output: out } = await model({ input: pixel_values })); }
+  catch (e) {
+    if (device !== "webgpu") throw e;
+    // Repli sur le processeur si le GPU échoue à l’inférence
+    [model, processor] = await loadModel("wasm"); device = "wasm";
+    ({ output: out } = await model({ input: pixel_values }));
+  }
+  const mask = await RawImage.fromTensor(out[0].mul(255).to("uint8")).resize(image.width, image.height);
+  return { data: mask.data, channels: mask.channels, w: image.width, h: image.height };
+}
+
+/* ---------- Composition ---------- */
+function loadImg(url){ return new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; }); }
+
+function compose(item){
+  const { w, h } = item.mask, ch = item.mask.channels, m = item.mask.data;
+  const c = document.createElement("canvas"); c.width = w; c.height = h;
+  const ctx = c.getContext("2d");
+  ctx.drawImage(item.img, 0, 0, w, h);
+  const id = ctx.getImageData(0, 0, w, h), d = id.data, k = opts.edge;
+  let x0 = w, y0 = h, x1 = -1, y1 = -1;
+  for (let i = 0, p = 0; i < w * h; i++, p += 4){
+    let a = m[i * ch];
+    if (k !== 1) a = Math.max(0, Math.min(255, (a - 128) * k + 128));
+    d[p + 3] = a;
+    if (a > 12){ const x = i % w, y = (i / w) | 0; if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y; }
+  }
+  ctx.putImageData(id, 0, 0);
+  const L = layout(w, h, x1 >= 0 ? [x0, y0, x1 + 1, y1 + 1] : null);
+  const o = document.createElement("canvas"); o.width = L.W; o.height = L.H;
+  const octx = o.getContext("2d");
+  if (opts.bg !== "transparent"){ octx.fillStyle = opts.bg; octx.fillRect(0, 0, L.W, L.H); }
+  octx.drawImage(c, L.ox, L.oy);
+  return { canvas: o, L };
+}
+
+// Calcule la taille du résultat (W×H) et où poser l’image d’origine (ox, oy)
+function layout(w, h, box){
+  if (opts.frame === "full" || !box) return { W: w, H: h, ox: 0, oy: 0 };
+  const [bx0, by0, bx1, by1] = box, bw = bx1 - bx0, bh = by1 - by0;
+  if (opts.frame === "tight"){
+    const pad = Math.round(Math.max(bw, bh) * opts.margin);
+    return { W: bw + 2 * pad, H: bh + 2 * pad, ox: pad - bx0, oy: pad - by0 };
+  }
+  // Sujet centré dans un format donné, avec une marge relative au cadre
+  const R = opts.ratio === "orig" ? w / h : +opts.ratio;
+  const k = 1 - 2 * opts.margin;
+  let W = Math.max(bw / k, (bh / k) * R), H = W / R;
+  W = Math.ceil(W); H = Math.ceil(H);
+  const ox = Math.round((W - bw) / 2 - bx0), oy = Math.round((H - bh) / 2 - by0);
+  return { W, H, ox, oy };
+}
+
+async function render(item){
+  if (!item.mask) return;
+  const { canvas, L } = compose(item);
+  const blob = await new Promise(r => canvas.toBlob(r, "image/png"));
+  if (item.outURL) URL.revokeObjectURL(item.outURL);
+  item.blob = blob; item.outURL = URL.createObjectURL(blob);
+  item.el.after.src = item.outURL;
+  // L’image « avant » suit le même cadrage que l’« après »
+  const sw = L.W, sh = L.H;
+  const b = document.createElement("canvas"); b.width = sw; b.height = sh;
+  b.getContext("2d").drawImage(item.img, L.ox, L.oy);
+  item.el.before.src = b.toDataURL("image/webp", 0.85);
+  item.el.stage.style.setProperty("--ar", `${sw}/${sh}`);
+  item.el.dims.textContent = `${sw} × ${sh} px · PNG ${(blob.size / 1024 / 1024).toFixed(2)} Mo`;
+  item.el.dl.disabled = false;
+}
+
+/* ---------- Interface ---------- */
+function outName(name){ return name.replace(/\.[^.]+$/, "") + "-detoure.png"; }
+
+function addItem(file){
+  const item = { id: crypto.randomUUID(), file, name: file.name || "image-collee.png", srcURL: URL.createObjectURL(file) };
+  const art = document.createElement("article");
+  art.className = "item";
+  art.innerHTML = `
+    <div class="stage" style="--pos:50%">
+      <img class="after" alt="">
+      <img class="before" alt="">
+      <span class="tag l">Avant</span><span class="tag r">Après</span>
+      <div class="handle"></div>
+      <input type="range" min="0" max="100" value="50" aria-label="Comparer avant et après">
+      <div class="busy">En file d’attente…</div>
+    </div>
+    <div class="meta">
+      <h3></h3>
+      <p class="dims">Analyse en cours…</p>
+      <div class="actions">
+        <button class="btn dl" disabled>Télécharger le PNG</button>
+        <button class="ghost rm">Retirer</button>
+      </div>
+    </div>`;
+  item.el = {
+    root: art, stage: art.querySelector(".stage"), after: art.querySelector(".after"), before: art.querySelector(".before"),
+    busy: art.querySelector(".busy"), dims: art.querySelector(".dims"), dl: art.querySelector(".dl"),
+  };
+  art.querySelector("h3").textContent = item.name;
+  item.el.before.src = item.srcURL;
+  const range = art.querySelector('input[type=range]');
+  range.addEventListener("input", () => item.el.stage.style.setProperty("--pos", range.value + "%"));
+  item.el.dl.addEventListener("click", () => download(item.blob, outName(item.name)));
+  art.querySelector(".rm").addEventListener("click", () => removeItem(item));
+  list.prepend(art);
+  items.push(item);
+  refreshUI();
+  queue.push(item); pump();
+}
+
+function removeItem(item){
+  const i = items.indexOf(item); if (i >= 0) items.splice(i, 1);
+  const q = queue.indexOf(item); if (q >= 0) queue.splice(q, 1);
+  item.removed = true;
+  URL.revokeObjectURL(item.srcURL); if (item.outURL) URL.revokeObjectURL(item.outURL);
+  item.el.root.remove(); refreshUI();
+}
+
+function refreshUI(){
+  empty.hidden = items.length > 0;
+  $("#clear").disabled = items.length === 0;
+  $("#zip").disabled = !items.some(i => i.blob);
+}
+
+async function pump(){
+  if (running) return; running = true;
+  try {
+    while (queue.length){
+      const item = queue.shift();
+      if (item.removed) continue;
+      try {
+        await ensureModel();
+        item.el.busy.textContent = "Détourage…";
+        item.img = await loadImg(item.srcURL);
+        const t = performance.now();
+        item.mask = await computeMask(item.srcURL);
+        if (item.removed) continue;
+        await render(item);
+        item.el.busy.remove();
+        setStatus(`« ${item.name} » détourée en ${((performance.now() - t) / 1000).toFixed(1)} s.`);
+      } catch (e) {
+        console.error(e);
+        item.el.busy.textContent = "Échec";
+        item.el.dims.innerHTML = `<span class="err">Ce fichier n’a pas pu être traité. Essayez un JPG ou un PNG.</span>`;
+      }
+      refreshUI();
+    }
+  } finally { running = false; }
+}
+
+function download(blob, name){
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name;
+  document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+}
+
+function takeFiles(fl){
+  const imgs = [...fl].filter(f => f.type.startsWith("image/"));
+  if (!imgs.length){ setStatus("Ce fichier n’est pas une image. Déposez un JPG, PNG ou WebP."); return; }
+  imgs.forEach(addItem);
+}
+
+drop.addEventListener("click", () => fileInput.click());
+drop.addEventListener("keydown", e => { if (e.key === "Enter" || e.key === " "){ e.preventDefault(); fileInput.click(); } });
+fileInput.addEventListener("change", () => { takeFiles(fileInput.files); fileInput.value = ""; });
+["dragenter", "dragover"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add("over"); }));
+["dragleave", "drop"].forEach(t => drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove("over"); }));
+drop.addEventListener("drop", e => takeFiles(e.dataTransfer.files));
+// Dépôt n’importe où sur la page
+window.addEventListener("dragover", e => e.preventDefault());
+window.addEventListener("drop", e => { e.preventDefault(); if (!drop.contains(e.target)) takeFiles(e.dataTransfer.files); });
+window.addEventListener("paste", e => { const f = [...(e.clipboardData?.files || [])]; if (f.length) takeFiles(f); });
+
+/* Réglages */
+const rerenderAll = () => items.forEach(i => i.mask && render(i));
+document.querySelectorAll(".sw").forEach(b => b.addEventListener("click", () => {
+  document.querySelectorAll(".sw").forEach(x => x.setAttribute("aria-pressed", x === b));
+  opts.bg = b.dataset.bg; rerenderAll();
+}));
+$("#bgColor").addEventListener("input", e => {
+  document.querySelectorAll(".sw").forEach(x => x.setAttribute("aria-pressed", "false"));
+  opts.bg = e.target.value; rerenderAll();
+});
+let edgeTimer;
+$("#edge").addEventListener("input", e => {
+  opts.edge = +e.target.value;
+  $("#edgeVal").textContent = opts.edge <= 1 ? "doux" : opts.edge >= 4 ? "nets" : "moyens";
+  clearTimeout(edgeTimer); edgeTimer = setTimeout(rerenderAll, 120);
+});
+$("#frame").addEventListener("change", e => {
+  opts.frame = e.target.value;
+  document.querySelector(".centerOpt").hidden = opts.frame !== "center";
+  document.querySelector(".marginOpt").hidden = opts.frame === "full";
+  rerenderAll();
+});
+$("#ratio").addEventListener("change", e => { opts.ratio = e.target.value; rerenderAll(); });
+let marginTimer;
+$("#margin").addEventListener("input", e => {
+  opts.margin = +e.target.value / 100;
+  $("#marginVal").textContent = e.target.value + " %";
+  clearTimeout(marginTimer); marginTimer = setTimeout(rerenderAll, 120);
+});
+$("#clear").addEventListener("click", () => [...items].forEach(removeItem));
+$("#zip").addEventListener("click", async () => {
+  const zip = new JSZip(), used = new Set();
+  items.filter(i => i.blob).forEach(i => {
+    let n = outName(i.name), k = 2;
+    while (used.has(n)) n = outName(i.name).replace(/\.png$/, `-${k++}.png`);
+    used.add(n); zip.file(n, i.blob);
+  });
+  download(await zip.generateAsync({ type: "blob" }), "images-detourees.zip");
+});
+
+// Précharge le modèle en arrière-plan pour que la première image soit rapide
+setTimeout(() => ensureModel().catch(() => {}), 400);
+</script>
+</body>
+</html>
